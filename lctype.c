@@ -16,12 +16,13 @@
 
 #include <limits.h>
 
+const lu_byte NONA=0x01;
 
-#if defined (LUA_UCID)		/* accept UniCode IDentifiers? */
-/* consider all non-ascii codepoints to be alphabetic */
-#define NONA		0x01
+#if defined (LUA_UCID)		/* only accept UniCode IDentifiers? */
+#define NONU		0x00
 #else
-#define NONA		0x00	/* default */
+/* consider all non-ascii and non-UTF-8 codepoints to be alphabetic */
+#define NONU		0x01	/* default */
 #endif
 
 
@@ -51,14 +52,14 @@ LUAI_DDEF const lu_byte luai_ctype_[UCHAR_MAX + 2] = {
   NONA,  NONA,  NONA,  NONA,  NONA,  NONA,  NONA,  NONA,
   NONA,  NONA,  NONA,  NONA,  NONA,  NONA,  NONA,  NONA,	/* b. */
   NONA,  NONA,  NONA,  NONA,  NONA,  NONA,  NONA,  NONA,
-  0x00,  0x00,  NONA,  NONA,  NONA,  NONA,  NONA,  NONA,	/* c. */
+  NONU,  NONU,  NONA,  NONA,  NONA,  NONA,  NONA,  NONA,	/* c. */
   NONA,  NONA,  NONA,  NONA,  NONA,  NONA,  NONA,  NONA,
   NONA,  NONA,  NONA,  NONA,  NONA,  NONA,  NONA,  NONA,	/* d. */
   NONA,  NONA,  NONA,  NONA,  NONA,  NONA,  NONA,  NONA,
   NONA,  NONA,  NONA,  NONA,  NONA,  NONA,  NONA,  NONA,	/* e. */
   NONA,  NONA,  NONA,  NONA,  NONA,  NONA,  NONA,  NONA,
-  NONA,  NONA,  NONA,  NONA,  NONA,  0x00,  0x00,  0x00,	/* f. */
-  0x00,  0x00,  0x00,  0x00,  0x00,  0x00,  0x00,  0x00
+  NONA,  NONA,  NONA,  NONA,  NONA,  NONU,  NONU,  NONU,	/* f. */
+  NONU,  NONU,  NONU,  NONU,  NONU,  NONU,  NONU,  NONU
 };
 
 #endif			/* } */
