@@ -408,6 +408,18 @@ static int sort (lua_State *L) {
   return 0;
 }
 
+
+static int array(lua_State *L){
+    int i;
+    int n = lua_gettop(L)-1;  /* number of elements to pack */
+    int len=luaL_checkinteger(L,1);
+    lua_createtable(L, len>n?len:n, 1);  /* create result table */
+    lua_replace(L, 1);  /* put it at index 1 */
+    for (i = n; i >= 1; i--)  /* assign elements */
+      lua_seti(L, 1, i);
+    return 1;  /* return table */
+}
+
 /* }====================================================== */
 
 
@@ -419,6 +431,7 @@ static const luaL_Reg tab_funcs[] = {
   {"remove", tremove},
   {"move", tmove},
   {"sort", sort},
+  {"array",array},
   {NULL, NULL}
 };
 
