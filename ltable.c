@@ -664,7 +664,7 @@ void luaH_newkey (lua_State *L, Table *t, const TValue *key, TValue *value) {
   Node *mp;
   TValue aux;
   if (l_unlikely(ttisnil(key)))
-    luaG_runerror(L, "table index is nil");
+    luaG_runerror(L, "table index is null");
   else if (ttisfloat(key)) {
     lua_Number f = fltvalue(key);
     lua_Integer k;
