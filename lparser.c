@@ -788,7 +788,7 @@ static void close_func (LexState *ls) {
 static int block_follow (LexState *ls, int withuntil) {
   switch (ls->t.token) {
     case TK_ELSE: case TK_ELSEIF:
-    case TK_END: case TK_EOS:
+    case '}': case TK_EOS:
       return 1;
     case TK_UNTIL: return withuntil;
     default: return 0;
@@ -988,7 +988,7 @@ static void parlist (LexState *ls) {
 
 
 static void body (LexState *ls, expdesc *e, int ismethod, int line) {
-  /* body ->  '(' parlist ')' block END */
+  /* body ->  '(' parlist ')' '{' block '}' */
   FuncState new_fs;
   BlockCnt bl;
   new_fs.f = addprototype(ls);
@@ -1001,9 +1001,10 @@ static void body (LexState *ls, expdesc *e, int ismethod, int line) {
   }
   parlist(ls);
   checknext(ls, ')');
+  checknext(ls, '{');
   statlist(ls);
   new_fs.f->lastlinedefined = ls->linenumber;
-  check_match(ls, TK_END, TK_FUNCTION, line);
+  check_match(ls, '}', TK_FUNCTION, line);
   codeclosure(ls, e);
   close_func(ls);
 }
@@ -1194,7 +1195,7 @@ static void simpleexp (LexState *ls, expdesc *v) {
 
 static UnOpr getunopr (int op) {
   switch (op) {
-    case TK_NOT: return OPR_NOT;
+    case TK_NOT: case '!': return OPR_NOT;
     case '-': return OPR_MINUS;
     case '~': return OPR_BNOT;
     case '#': return OPR_LEN;
@@ -1209,12 +1210,12 @@ static BinOpr getbinopr (int op) {
     case '-': return OPR_SUB;
     case '*': return OPR_MUL;
     case '%': return OPR_MOD;
-    case '^': return OPR_POW;
-    case '/': return OPR_DIV;
-    case TK_IDIV: return OPR_IDIV;
+    case TK_POW: return OPR_POW;
+    case TK_DIV: return OPR_DIV;
+    case '/': return OPR_IDIV;
     case '&': return OPR_BAND;
     case '|': return OPR_BOR;
-    case '~': return OPR_BXOR;
+    case '^': return OPR_BXOR;
     case TK_SHL: return OPR_SHL;
     case TK_SHR: return OPR_SHR;
     case TK_CONCAT: return OPR_CONCAT;
@@ -1308,6 +1309,16 @@ static void block (LexState *ls) {
   BlockCnt bl;
   enterblock(fs, &bl, 0);
   statlist(ls);
+  leaveblock(fs);
+}
+
+
+static void single_block (LexState *ls) {
+  /* single_block -> stat */
+  FuncState *fs = ls->fs;
+  BlockCnt bl;
+  enterblock(fs, &bl, 0);
+  statement(ls);
   leaveblock(fs);
 }
 
@@ -1466,26 +1477,29 @@ static void labelstat (LexState *ls, TString *name, int line) {
 
 
 static void whilestat (LexState *ls, int line) {
-  /* whilestat -> WHILE cond DO block END */
+  /* whilestat -> WHILE '(' cond ')' ('{' block '}' | single_block) */
   FuncState *fs = ls->fs;
   int whileinit;
   int condexit;
   BlockCnt bl;
   luaX_next(ls);  /* skip WHILE */
+  checknext(ls, '(');
   whileinit = luaK_getlabel(fs);
   condexit = cond(ls);
   enterblock(fs, &bl, 1);
-  checknext(ls, TK_DO);
-  block(ls);
+  checknext(ls, ')');
+  int multi=testnext(ls, '{');
+  if (multi) block(ls);
+  else single_block(ls);
   luaK_jumpto(fs, whileinit);
-  check_match(ls, TK_END, TK_WHILE, line);
+  if (multi) check_match(ls, '}', TK_WHILE, line);
   leaveblock(fs);
   luaK_patchtohere(fs, condexit);  /* false conditions finish the loop */
 }
 
 
 static void repeatstat (LexState *ls, int line) {
-  /* repeatstat -> REPEAT block UNTIL cond */
+  /* repeatstat -> REPEAT '{' block '}' UNTIL '(' cond ')' */
   int condexit;
   FuncState *fs = ls->fs;
   int repeat_init = luaK_getlabel(fs);
@@ -1493,9 +1507,13 @@ static void repeatstat (LexState *ls, int line) {
   enterblock(fs, &bl1, 1);  /* loop block */
   enterblock(fs, &bl2, 0);  /* scope block */
   luaX_next(ls);  /* skip REPEAT */
+  checknext(ls,'{');
   statlist(ls);
+  checknext(ls,'}');
   check_match(ls, TK_UNTIL, TK_REPEAT, line);
+  checknext(ls,'(');
   condexit = cond(ls);  /* read condition (inside scope block) */
+  checknext(ls,')');
   leaveblock(fs);  /* finish scope */
   if (bl2.upval) {  /* upvalues? */
     int exit = luaK_jump(fs);  /* normal exit must jump over fix */
@@ -1541,19 +1559,21 @@ static void fixforjump (FuncState *fs, int pc, int dest, int back) {
 /*
 ** Generate code for a 'for' loop.
 */
-static void forbody (LexState *ls, int base, int line, int nvars, int isgen) {
-  /* forbody -> DO block */
+static int forbody (LexState *ls, int base, int line, int nvars, int isgen) {
+  /* forbody -> ')' ('{' block | single_block ) */
   static const OpCode forprep[2] = {OP_FORPREP, OP_TFORPREP};
   static const OpCode forloop[2] = {OP_FORLOOP, OP_TFORLOOP};
   BlockCnt bl;
   FuncState *fs = ls->fs;
   int prep, endfor;
-  checknext(ls, TK_DO);
+  checknext(ls, ')');
+  int multi=testnext(ls, '{');
   prep = luaK_codeABx(fs, forprep[isgen], base, 0);
   enterblock(fs, &bl, 0);  /* scope for declared variables */
   adjustlocalvars(ls, nvars);
   luaK_reserveregs(fs, nvars);
-  block(ls);
+  if (multi) block(ls);
+  else single_block(ls);
   leaveblock(fs);  /* end of scope for declared variables */
   fixforjump(fs, prep, luaK_getlabel(fs), 0);
   if (isgen) {  /* generic for? */
@@ -1563,10 +1583,11 @@ static void forbody (LexState *ls, int base, int line, int nvars, int isgen) {
   endfor = luaK_codeABx(fs, forloop[isgen], base, 0);
   fixforjump(fs, endfor, prep + 1, 1);
   luaK_fixline(fs, line);
+  return multi;
 }
 
 
-static void fornum (LexState *ls, TString *varname, int line) {
+static int fornum (LexState *ls, TString *varname, int line) {
   /* fornum -> NAME = exp,exp[,exp] forbody */
   FuncState *fs = ls->fs;
   int base = fs->freereg;
@@ -1585,11 +1606,11 @@ static void fornum (LexState *ls, TString *varname, int line) {
     luaK_reserveregs(fs, 1);
   }
   adjustlocalvars(ls, 3);  /* control variables */
-  forbody(ls, base, line, 1, 0);
+  return forbody(ls, base, line, 1, 0);
 }
 
 
-static void forlist (LexState *ls, TString *indexname) {
+static int forlist (LexState *ls, TString *indexname) {
   /* forlist -> NAME {,NAME} IN explist forbody */
   FuncState *fs = ls->fs;
   expdesc e;
@@ -1613,37 +1634,41 @@ static void forlist (LexState *ls, TString *indexname) {
   adjustlocalvars(ls, 4);  /* control variables */
   marktobeclosed(fs);  /* last control var. must be closed */
   luaK_checkstack(fs, 3);  /* extra space to call generator */
-  forbody(ls, base, line, nvars - 4, 1);
+  return forbody(ls, base, line, nvars - 4, 1);
 }
 
 
 static void forstat (LexState *ls, int line) {
-  /* forstat -> FOR (fornum | forlist) END */
+  /* forstat -> FOR '(' (fornum | forlist) ['}'] */
   FuncState *fs = ls->fs;
   TString *varname;
   BlockCnt bl;
   enterblock(fs, &bl, 1);  /* scope for loop and control variables */
   luaX_next(ls);  /* skip 'for' */
+  checknext(ls, '(');
   varname = str_checkname(ls);  /* first variable name */
+  int multi=0;
   switch (ls->t.token) {
-    case '=': fornum(ls, varname, line); break;
-    case ',': case TK_IN: forlist(ls, varname); break;
+    case '=': multi=fornum(ls, varname, line); break;
+    case ',': case TK_IN: multi=forlist(ls, varname); break;
     default: luaX_syntaxerror(ls, "'=' or 'in' expected");
   }
-  check_match(ls, TK_END, TK_FOR, line);
+  if (multi) check_match(ls, '}', TK_FOR, line);
   leaveblock(fs);  /* loop scope ('break' jumps to this point) */
 }
 
 
 static void test_then_block (LexState *ls, int *escapelist) {
-  /* test_then_block -> [IF | ELSEIF] cond THEN block */
+  /* test_then_block -> [IF | ELSEIF] '(' cond ')' ('{' block '}' | single_block) */
   BlockCnt bl;
   FuncState *fs = ls->fs;
   expdesc v;
   int jf;  /* instruction to skip 'then' code (if condition is false) */
   luaX_next(ls);  /* skip IF or ELSEIF */
+  checknext(ls, '(');
   expr(ls, &v);  /* read condition */
-  checknext(ls, TK_THEN);
+  checknext(ls, ')');
+  int multi=testnext(ls, '{');
   if (ls->t.token == TK_BREAK) {  /* 'if x then break' ? */
     int line = ls->linenumber;
     luaK_goiffalse(ls->fs, &v);  /* will jump if condition is true */
@@ -1651,7 +1676,8 @@ static void test_then_block (LexState *ls, int *escapelist) {
     enterblock(fs, &bl, 0);  /* must enter block before 'goto' */
     newgotoentry(ls, luaS_newliteral(ls->L, "break"), line, v.t);
     while (testnext(ls, ';')) {}  /* skip semicolons */
-    if (block_follow(ls, 0)) {  /* jump is the entire block? */
+    if (block_follow(ls, 0) || !multi) {  /* jump is the entire block? */
+      if (multi) checknext(ls, '}');
       leaveblock(fs);
       return;  /* and that is it */
     }
@@ -1663,7 +1689,11 @@ static void test_then_block (LexState *ls, int *escapelist) {
     enterblock(fs, &bl, 0);
     jf = v.f;
   }
-  statlist(ls);  /* 'then' part */
+  if (multi) {  /* 'then' part */
+    statlist(ls);
+    checknext(ls, '}');
+  }
+  else single_block(ls);
   leaveblock(fs);
   if (ls->t.token == TK_ELSE ||
       ls->t.token == TK_ELSEIF)  /* followed by 'else'/'elseif'? */
@@ -1673,15 +1703,20 @@ static void test_then_block (LexState *ls, int *escapelist) {
 
 
 static void ifstat (LexState *ls, int line) {
-  /* ifstat -> IF cond THEN block {ELSEIF cond THEN block} [ELSE block] END */
+  /* ifstat -> IF '(' cond ')' ('{' block '}' | single_block) {ELSEIF '(' cond ')' ('{' block '}' | single_block)} [ELSE ('{' block '}' | single_block)]*/
   FuncState *fs = ls->fs;
   int escapelist = NO_JUMP;  /* exit list for finished parts */
   test_then_block(ls, &escapelist);  /* IF cond THEN block */
   while (ls->t.token == TK_ELSEIF)
     test_then_block(ls, &escapelist);  /* ELSEIF cond THEN block */
-  if (testnext(ls, TK_ELSE))
-    block(ls);  /* 'else' part */
-  check_match(ls, TK_END, TK_IF, line);
+  if (testnext(ls, TK_ELSE)) {  /* 'else' part */
+    int multi=testnext(ls, '{');
+    if (multi) {
+      block(ls);
+      checknext(ls, '}');
+    }
+    else single_block(ls);
+  }
   luaK_patchtohere(fs, escapelist);  /* patch escape list to 'if' end */
 }
 
@@ -1858,10 +1893,11 @@ static void statement (LexState *ls) {
       whilestat(ls, line);
       break;
     }
-    case TK_DO: {  /* stat -> DO block END */
+    case TK_DO: {  /* stat -> DO '{' block '}' */
       luaX_next(ls);  /* skip DO */
+	  checknext(ls, '{');
       block(ls);
-      check_match(ls, TK_END, TK_DO, line);
+      check_match(ls, '}', TK_DO, line);
       break;
     }
     case TK_FOR: {  /* stat -> forstat */
