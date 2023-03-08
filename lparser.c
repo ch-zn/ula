@@ -1319,6 +1319,7 @@ static void single_block (LexState *ls) {
   BlockCnt bl;
   enterblock(fs, &bl, 0);
   statement(ls);
+  while (testnext(ls, ';')) {}  /* skip semicolons */
   leaveblock(fs);
 }
 
